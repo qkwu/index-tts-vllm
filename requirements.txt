@@ -1,4 +1,4 @@
-vllm==0.9.0
+vllm==0.7.3
 # accelerate==0.25.0
 # transformers==4.36.2
 cn2an==0.5.22
