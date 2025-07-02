@@ -130,7 +130,7 @@ class RelPositionalEncoding(PositionalEncoding):
         dropout_rate (float): Dropout rate.
         max_len (int): Maximum input length.
     """
-    def __init__(self, d_model: int, dropout_rate: float, max_len: int = 5000):
+    def __init__(self, d_model: int, dropout_rate: float, max_len: int = 100000):
         """Initialize class."""
         super().__init__(d_model, dropout_rate, max_len, reverse=True)
 
