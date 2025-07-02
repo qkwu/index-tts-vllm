@@ -5,7 +5,7 @@ from indextts.utils.checkpoint import load_checkpoint
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model_dir", type=str, default="")
+parser.add_argument("--model_dir", type=str, default="/home/code/index-tts/checkpoints/Index-TTS")
 args = parser.parse_args()
 
 model_dir = args.model_dir
