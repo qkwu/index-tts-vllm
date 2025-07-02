@@ -35,7 +35,7 @@ class PositionalEncoding(torch.nn.Module):
     def __init__(self,
                  d_model: int,
                  dropout_rate: float,
-                 max_len: int = 999999,
+                 max_len: int = 100000,
                  reverse: bool = False):
         """Construct an PositionalEncoding object."""
         super().__init__()
@@ -94,13 +94,23 @@ class PositionalEncoding(torch.nn.Module):
         # How to subscript a Union type:
         #   https://github.com/pytorch/pytorch/issues/69434
         if isinstance(offset, int):
-            assert offset + size < self.max_len
+            # assert offset + size < self.max_len
+            if offset + size >= self.max_len:
+                # 裁剪到最大长度
+                size = max(0, self.max_len - offset)
             pos_emb = self.pe[:, offset:offset + size]
         elif isinstance(offset, torch.Tensor) and offset.dim() == 0:  # scalar
-            assert offset + size < self.max_len
+            # assert offset + size < self.max_len
+            if offset + size >= self.max_len:
+                # 裁剪到最大长度
+                size = max(0, self.max_len - offset)
             pos_emb = self.pe[:, offset:offset + size]
         else:  # for batched streaming decoding on GPU
-            assert torch.max(offset) + size < self.max_len
+            # assert torch.max(offset) + size < self.max_len
+            max_offset = torch.max(offset).item()
+            if max_offset + size >= self.max_len:
+                # 裁剪到最大长度
+                size = max(0, self.max_len - max_offset)
             index = offset.unsqueeze(1) + \
                 torch.arange(0, size).to(offset.device)  # B X T
             flag = index > 0
