@@ -184,7 +184,7 @@ async def compatible_generate_tts(request: TTSRequest, background_tasks: Backgro
         # 旧版的 reference_id 对应新版的 character
         character = request.reference_id.split(',')[0].strip()
 
-        if character not in tts.spk2prompt_embed:
+        if character not in tts.speaker_dict:
             raise HTTPException(status_code=404, detail=f"Speaker '{character}' not found.")
 
         # --- 调用核心生成逻辑 (不做任何改动) ---
@@ -238,9 +238,9 @@ async def compatible_get_audio(audio_id: str):
 @app.get("/v1/references", tags=["Compatibility Endpoints"])
 async def compatible_list_references():
     """[兼容旧版] 列出所有可用的参考音频ID (说话人)"""
-    if tts is None or not hasattr(tts, 'spk2prompt_embed'):
+    if tts is None or not hasattr(tts, 'speaker_dict'):
         return {"references": []}
-    references = [{"id": spk_id, "name": spk_id} for spk_id in tts.spk2prompt_embed.keys()]
+    references = [{"id": spk_id, "name": spk_id} for spk_id in tts.speaker_dict.keys()]
     return {"references": references}
 
 @app.get("/health")
