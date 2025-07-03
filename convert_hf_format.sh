@@ -1,3 +1,5 @@
-python convert_hf_format.py
+MODEL_DIR="/home/code/index-tts/checkpoints/Index-TTS"
+
+python convert_hf_format.py --model_dir "$MODEL_DIR"
 
 echo "All operations completed successfully!"

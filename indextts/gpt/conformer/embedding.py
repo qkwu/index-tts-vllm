@@ -35,7 +35,7 @@ class PositionalEncoding(torch.nn.Module):
     def __init__(self,
                  d_model: int,
                  dropout_rate: float,
-                 max_len: int = 100000,
+                 max_len: int = 5000,
                  reverse: bool = False):
         """Construct an PositionalEncoding object."""
         super().__init__()
@@ -130,7 +130,7 @@ class RelPositionalEncoding(PositionalEncoding):
         dropout_rate (float): Dropout rate.
         max_len (int): Maximum input length.
     """
-    def __init__(self, d_model: int, dropout_rate: float, max_len: int = 100000):
+    def __init__(self, d_model: int, dropout_rate: float, max_len: int = 5000):
         """Initialize class."""
         super().__init__(d_model, dropout_rate, max_len, reverse=True)
 
