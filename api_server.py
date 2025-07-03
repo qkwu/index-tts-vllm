@@ -241,6 +241,11 @@ async def compatible_list_references():
     references = [{"id": spk_id, "name": spk_id} for spk_id in tts.spk2prompt_embed.keys()]
     return {"references": references}
 
+@app.get("/health")
+def health_check():
+    """健康检查接口"""
+    return {"status": "healthy", "version": "index-tts-vllm 1.5"}
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
