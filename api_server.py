@@ -83,12 +83,13 @@ async def lifespan(app: FastAPI):
     for speaker_dir in Path(REFERENCE_DIR).iterdir():
         if speaker_dir.is_dir():
             speaker_id = speaker_dir.name
-            audio_files = [p for p in speaker_dir.glob("*") if p.suffix.lower() in ['.wav', '.mp3', '.flac']]
+            audio_files = [str(p) for p in speaker_dir.glob("*")
+                           if p.suffix.lower() in ['.wav', '.mp3', '.flac']]
 
             if audio_files:
-                audio_paths = [str(f) for f in audio_files]
-                tts.registry_speaker(speaker_id, audio_paths)
-                logger.info(f"成功注册音色: '{speaker_id}' (使用 {len(audio_paths)} 个音频文件)。")
+                # 将会使用音频文件列表中的第一个
+                tts.registry_speaker(speaker_id, audio_files)
+                logger.info(f"成功注册音色: '{speaker_id}' (使用单个音频文件)。")
                 speaker_count += 1
 
     if speaker_count == 0:

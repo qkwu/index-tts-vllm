@@ -339,32 +339,40 @@ class IndexTTS:
         wav_data = wav_data.numpy().T
         wav_data = trim_and_pad_silence(wav_data)
         return (sampling_rate, wav_data)
-    
+
     @torch.no_grad()
     def registry_speaker(self, speaker: str, audio_paths: List[str]):
-        auto_conditioning = []
-        for ap_ in audio_paths:
+        # 过滤出有效的音频文件
+        valid_audio_paths = [p for p in audio_paths if p.lower().endswith(('.mp3', '.wav', '.flac'))]
+
+        if not valid_audio_paths:
+            print(f"警告: {speaker} 没有有效的音频文件")
+            return
+
+        # 只使用第一个音频文件
+        ap_ = valid_audio_paths[0]
+        print(f"Speaker {speaker}: 使用音频 {os.path.basename(ap_)}")
+
+        try:
+            # 处理单个音频
             audio, sr = torchaudio.load(ap_)
             audio = torch.mean(audio, dim=0, keepdim=True)
             if audio.shape[0] > 1:
                 audio = audio[0].unsqueeze(0)
             audio = torchaudio.transforms.Resample(sr, 24000)(audio)
             cond_mel = MelSpectrogramFeatures()(audio).to(self.device)
-            # cond_mel_frame = cond_mel.shape[-1]
-            auto_conditioning.append(cond_mel)
 
-        speech_conditioning_latent = []
-        for cond_mel in auto_conditioning:
-            speech_conditioning_latent_ = self.gpt.get_conditioning(
-                cond_mel,  # .half()
+            # 计算条件编码
+            speech_conditioning_latent = self.gpt.get_conditioning(
+                cond_mel,
                 torch.tensor([cond_mel.shape[-1]], device=self.device)
             )
-            speech_conditioning_latent.append(speech_conditioning_latent_)
-        speech_conditioning_latent = torch.stack(speech_conditioning_latent).sum(dim=0)
-        speech_conditioning_latent = speech_conditioning_latent / len(auto_conditioning)
 
-        self.speaker_dict[speaker] = {
-            "auto_conditioning": auto_conditioning,
-            "speech_conditioning_latent": speech_conditioning_latent
-        }
-        print(f"Speaker: {speaker} registered")
+            # 存储结果
+            self.speaker_dict[speaker] = {
+                "auto_conditioning": [cond_mel],
+                "speech_conditioning_latent": speech_conditioning_latent
+            }
+            print(f"Speaker: {speaker} registered successfully with {os.path.basename(ap_)}")
+        except Exception as e:
+            print(f"处理音频 {ap_} 时出错: {e}")
