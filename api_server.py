@@ -2,6 +2,8 @@
 import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 
+from fastapi import HTTPException
+
 from pydantic import BaseModel
 from typing import List, Optional
 
