@@ -204,7 +204,7 @@ async def compatible_generate_tts(request: TTSRequest, background_tasks: Backgro
             sampling_rate=sr
         )
 
-        results[task_id] = response_data.dict()
+        results[task_id] = response_data.model_dump()
         background_tasks.add_task(lambda: results.pop(task_id, None))
 
         return response_data
