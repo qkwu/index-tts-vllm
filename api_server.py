@@ -181,15 +181,12 @@ async def compatible_generate_tts(request: TTSRequest, background_tasks: Backgro
 
     try:
         # --- 适配层：转换输入参数 ---
-        # 旧版的 reference_id 对应新版的 character
         character = request.reference_id.split(',')[0].strip()
 
         if character not in tts.speaker_dict:
             raise HTTPException(status_code=404, detail=f"Speaker '{character}' not found.")
 
-        # --- 调用核心生成逻辑 (不做任何改动) ---
-        # 注意：这里我们只传递新引擎支持的参数。
-        # 旧版请求中的 speed, volume 等参数将被忽略。
+        # --- 调用核心生成逻辑
         sr, wav = await tts.infer_with_ref_audio_embed(character, request.text)
         # --- 核心生成逻辑调用结束 ---
 
