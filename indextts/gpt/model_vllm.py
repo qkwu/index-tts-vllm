@@ -6,20 +6,17 @@ import patch_vllm  # ⚠️ Monkey Patch, do not delete this line
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import GPT2Config, GPT2LMHeadModel, LogitsProcessorList
-from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
-from transformers.utils.model_parallel_utils import (assert_device_map,
-                                                     get_device_map)
+from transformers import AutoModelForCausalLM, GPT2Config, GPT2LMHeadModel, LogitsProcessorList
+
 from transformers import GPT2Config, GPT2Model
 
 from indextts.gpt.conformer_encoder import ConformerEncoder
 from indextts.gpt.perceiver import PerceiverResampler
-from indextts.utils.arch_util import AttentionBlock
-from indextts.utils.typical_sampling import TypicalLogitsWarper
+
+from indextts.gpt.index_tts_gpt2_vllm_v1 import PLACEHOLDER_TOKEN, PLACEHOLDER_TOKEN_ID
 
 from vllm import AsyncLLMEngine, SamplingParams, TokensPrompt
-from vllm.engine.arg_utils import AsyncEngineArgs
-import asyncio
+from vllm.v1.engine.async_llm import AsyncLLM
 
 
 def null_position_embeddings(range, dim):
@@ -42,7 +39,7 @@ class LearnedPositionEmbeddings(nn.Module):
 
 
 class UnifiedVoice(nn.Module):
-    def __init__(self, gpu_memory_utilization=0.25,
+    def __init__(self, vllm_model,
                  layers=8, model_dim=512, heads=8, max_text_tokens=120, max_mel_tokens=250, max_conditioning_inputs=1,
                  mel_length_compression=1024, number_text_tokens=256,
                  start_text_token=0, stop_text_token=1, number_mel_codes=8194, start_mel_token=8192, stop_mel_token=8193,
@@ -109,11 +106,18 @@ class UnifiedVoice(nn.Module):
                                 gradient_checkpointing=False,
                                 use_cache=True)
         self.gpt = GPT2Model(gpt_config)
-        # Override the built in positional embeddings
+        # self.gpt = AutoModelForCausalLM.from_pretrained(
+        #     os.path.join(model_dir, "gpt"),
+        #     # torch_dtype=torch.float16,
+        #     # device_map="auto",
+        #     # trust_remote_code=True,          # 若自定义模型类需打开
+        # ).transformer
         del self.gpt.wpe
         self.gpt.wpe = functools.partial(null_position_embeddings, dim=model_dim)
-        # Built-in token embeddings are unused.
         del self.gpt.wte
+        # self.gpt = self.gpt.to("cuda")  # .to(torch.float16)
+        # self.gpt.eval()
+
         self.mel_pos_embedding, self.text_pos_embedding  = LearnedPositionEmbeddings(max_mel_seq_len, model_dim), LearnedPositionEmbeddings(max_text_seq_len, model_dim)
 
         self.mel_solo_embedding = 0
@@ -128,16 +132,7 @@ class UnifiedVoice(nn.Module):
         for module in embeddings:
             module.weight.data.normal_(mean=0.0, std=.02)
 
-        # init vllm engine
-        vllm_dir = os.path.join(model_dir, "vllm")
-        engine_args = AsyncEngineArgs(
-            model=vllm_dir,
-            tensor_parallel_size=1,
-            dtype="auto",
-            gpu_memory_utilization=gpu_memory_utilization,
-            # enforce_eager=True,
-        )
-        self.llm = AsyncLLMEngine.from_engine_args(engine_args)
+        self.llm: AsyncLLM = vllm_model
         self.sampling_params = SamplingParams(
             temperature=1.0,
             top_p=0.8,
@@ -159,23 +154,23 @@ class UnifiedVoice(nn.Module):
         return conds
 
     async def inference_speech(self, speech_conditioning_latent, text_inputs, cond_mel_lengths=None):
-
-        text_inputs = F.pad(text_inputs, (0, 1), value=self.stop_text_token)
         text_inputs, _ = self.build_aligned_inputs_and_targets(text_inputs, self.start_text_token, self.stop_text_token)
         text_emb = self.text_embedding(text_inputs) + self.text_pos_embedding(text_inputs)
 
         # speech_conditioning_latent = self.get_conditioning(speech_conditioning_latent, cond_mel_lengths)
         emb = torch.cat([speech_conditioning_latent, text_emb], dim=1)
-        trunc_index = emb.shape[1] + 1
+        # trunc_index = emb.shape[1] + 1
 
         mel_start_emb = self.mel_embedding(torch.full((emb.shape[0], 1,), fill_value=self.start_mel_token, dtype=torch.long, device=text_inputs.device))
         mel_start_emb = mel_start_emb + self.mel_pos_embedding(mel_start_emb)
         inputs_embeds = torch.cat([emb, mel_start_emb], dim=1)
 
-        fake_inputs = [idx for idx in range(inputs_embeds.shape[1])]
-        multi_modal_data = {"image": inputs_embeds}
-        tokens_prompt = TokensPrompt(prompt_token_ids=fake_inputs, multi_modal_data=multi_modal_data)
-        output_generator = self.llm.generate(tokens_prompt, sampling_params=self.sampling_params, request_id=uuid.uuid4())
+        # fake_inputs = [idx for idx in range(inputs_embeds.shape[1])]
+        fake_inputs = PLACEHOLDER_TOKEN * 1  # [PLACEHOLDER_TOKEN_ID]
+        multi_modal_data = {"audio": {"audio_embeds": [inputs_embeds.squeeze(0).cpu()]}}
+        tokens_prompt = TokensPrompt(prompt=fake_inputs, multi_modal_data=multi_modal_data)
+        # tokens_prompt = TokensPrompt(prompt_token_ids=fake_inputs, multi_modal_data=multi_modal_data)
+        output_generator = self.llm.generate(tokens_prompt, sampling_params=self.sampling_params, request_id=uuid.uuid4().hex)
         # latent = []
         async for output in output_generator:
             # latent.append(output.hidden_states.clone())
@@ -187,7 +182,7 @@ class UnifiedVoice(nn.Module):
         # latent = latent.float()
         # print("codes", len(codes), codes)
         # print("latent", latent.shape, latent)
-        return codes, None  # , latent
+        return codes  # , latent
 
     def set_mel_padding(self, mel_input_tokens, mel_lengths):
         """

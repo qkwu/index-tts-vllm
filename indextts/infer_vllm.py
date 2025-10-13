@@ -65,7 +65,7 @@ def trim_and_pad_silence(wav_data, threshold=1000, min_silence=int(24000*0.4)):
 
 class IndexTTS:
     def __init__(
-        self, cfg_path="checkpoints/config.yaml", model_dir="checkpoints", gpu_memory_utilization=0.25, is_fp16=True, device=None, use_cuda_kernel=None,
+        self, model_dir="checkpoints", is_fp16=True, device=None, use_cuda_kernel=None, gpu_memory_utilization=0.25
     ):
         """
         Args:
@@ -93,12 +93,26 @@ class IndexTTS:
             self.use_cuda_kernel = False
             print(">> Be patient, it may take a while to run in CPU mode.")
 
+        cfg_path = os.path.join(model_dir, "config.yaml")
         self.cfg = OmegaConf.load(cfg_path)
         self.model_dir = model_dir
         self.dtype = torch.float16 if self.is_fp16 else None
         self.stop_mel_token = self.cfg.gpt.stop_mel_token
 
-        self.gpt = UnifiedVoice(gpu_memory_utilization, **self.cfg.gpt, model_dir=model_dir)
+        from vllm.engine.arg_utils import AsyncEngineArgs
+        from vllm.v1.engine.async_llm import AsyncLLM
+
+        vllm_dir = os.path.join(model_dir, "gpt")
+        engine_args = AsyncEngineArgs(
+            model=vllm_dir,
+            tensor_parallel_size=1,
+            dtype="auto",
+            gpu_memory_utilization=gpu_memory_utilization,
+            # enforce_eager=True,
+        )
+        indextts_vllm = AsyncLLM.from_engine_args(engine_args)
+
+        self.gpt = UnifiedVoice(indextts_vllm, **self.cfg.gpt, model_dir=model_dir)
         self.gpt_path = os.path.join(self.model_dir, self.cfg.gpt_checkpoint)
         load_checkpoint(self.gpt, self.gpt_path)
         self.gpt = self.gpt.to(self.device)
@@ -171,7 +185,7 @@ class IndexTTS:
         # print("filtered_latent", filtered_latent.shape)
         return filtered_latent
 
-    async def infer(self, audio_prompt: List[str], text, output_path=None, verbose=False):
+    async def infer(self, audio_prompt: List[str], text, output_path=None, verbose=False, seed=None):
         print(">> start inference...")
         start_time = time.perf_counter()
 
@@ -211,8 +225,12 @@ class IndexTTS:
 
             m_start_time = time.perf_counter()
             with torch.no_grad():
-                # with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
-                codes, latent = await self.gpt.inference_speech(
+                # 设置采样参数的seed
+                if seed is not None:
+                    self.gpt.sampling_params.seed = int(seed)
+                else:
+                    self.gpt.sampling_params.seed = None
+                codes = await self.gpt.inference_speech(
                     speech_conditioning_latent,
                     text_tokens,
                     # cond_mel_lengths=torch.tensor([auto_conditioning.shape[-1]], device=text_tokens.device)
@@ -294,7 +312,7 @@ class IndexTTS:
 
             m_start_time = time.perf_counter()
             with torch.no_grad():
-                codes, latent = await self.gpt.inference_speech(
+                codes = await self.gpt.inference_speech(
                     speech_conditioning_latent,
                     text_tokens,
                     # cond_mel_lengths=torch.tensor([auto_conditioning.shape[-1]], device=text_tokens.device)
