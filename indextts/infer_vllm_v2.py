@@ -509,6 +509,122 @@ class IndexTTS2:
             wav_data = wav_data.numpy().T
             return (sampling_rate, wav_data)
 
+    @torch.no_grad()
+    def registry_speaker(self, speaker: str, audio_paths: List[str]):
+        """
+        注册音色，类似 1.0 版本的功能
+        Args:
+            speaker: 音色名称
+            audio_paths: 音频文件路径列表
+        """
+        # 过滤出有效的音频文件
+        valid_audio_paths = [p for p in audio_paths if p.lower().endswith(('.mp3', '.wav', '.flac'))]
+
+        if not valid_audio_paths:
+            print(f"警告: {speaker} 没有有效的音频文件")
+            return
+
+        # 只使用第一个音频文件（保持与1.0版本一致）
+        ap_ = valid_audio_paths[0]
+        print(f"Speaker {speaker}: 使用音频 {os.path.basename(ap_)}")
+
+        try:
+            # 处理音频文件，生成所需的条件编码
+            audio, sr = librosa.load(ap_)
+            audio = torch.tensor(audio).unsqueeze(0)
+            audio_22k = torchaudio.transforms.Resample(sr, 22050)(audio)
+            audio_16k = torchaudio.transforms.Resample(sr, 16000)(audio)
+
+            # 生成语义条件编码
+            inputs = self.extract_features(audio_16k, sampling_rate=16000, return_tensors="pt")
+            input_features = inputs["input_features"]
+            attention_mask = inputs["attention_mask"]
+            input_features = input_features.to(self.device)
+            attention_mask = attention_mask.to(self.device)
+            spk_cond_emb = self.get_emb(input_features, attention_mask)
+
+            # 生成 semantic codec 相关编码
+            _, S_ref = self.semantic_codec.quantize(spk_cond_emb)
+            ref_mel = self.mel_fn(audio_22k.to(spk_cond_emb.device).float())
+            ref_target_lengths = torch.LongTensor([ref_mel.size(2)]).to(ref_mel.device)
+
+            # 生成 campplus style 编码
+            feat = torchaudio.compliance.kaldi.fbank(audio_16k.to(ref_mel.device),
+                                                     num_mel_bins=80,
+                                                     dither=0,
+                                                     sample_frequency=16000)
+            feat = feat - feat.mean(dim=0, keepdim=True)
+            style = self.campplus_model(feat.unsqueeze(0))
+
+            # 生成 s2mel prompt condition
+            prompt_condition = self.s2mel.models['length_regulator'](S_ref,
+                                                                     ylens=ref_target_lengths,
+                                                                     n_quantizers=3,
+                                                                     f0=None)[0]
+
+            # 存储所有必要的信息
+            self.speaker_dict[speaker] = {
+                "spk_audio_path": ap_,
+                "spk_cond_emb": spk_cond_emb,
+                "s2mel_style": style,
+                "s2mel_prompt": prompt_condition,
+                "ref_mel": ref_mel,
+            }
+            print(f"Speaker: {speaker} registered successfully with {os.path.basename(ap_)}")
+        except Exception as e:
+            print(f"处理音频 {ap_} 时出错: {e}")
+            traceback.print_exc()
+
+    async def infer_with_ref_audio_embed(self, speaker: str, text,
+                                         emo_alpha=1.0, emo_vector=None,
+                                         use_emo_text=False, emo_text=None,
+                                         use_random=False, interval_silence=200,
+                                         max_text_tokens_per_sentence=120):
+        """
+        使用预注册的音色进行推理，类似 1.0 版本的功能
+        Args:
+            speaker: 注册的音色名称
+            text: 要合成的文本
+            其他参数与 infer 方法相同
+        """
+        if speaker not in self.speaker_dict:
+            raise ValueError(f"Speaker '{speaker}' not found. Please register it first.")
+
+        # 从缓存中获取音色信息
+        speaker_info = self.speaker_dict[speaker]
+        spk_audio_path = speaker_info["spk_audio_path"]
+
+        # 调用原始的 infer 方法
+        return await self.infer(
+            spk_audio_prompt=spk_audio_path,
+            text=text,
+            output_path=None,
+            emo_audio_prompt=None,  # 默认使用说话人音频作为情感参考
+            emo_alpha=emo_alpha,
+            emo_vector=emo_vector,
+            use_emo_text=use_emo_text,
+            emo_text=emo_text,
+            use_random=use_random,
+            interval_silence=interval_silence,
+            max_text_tokens_per_sentence=max_text_tokens_per_sentence
+        )
+
+    def trim_and_pad_silence(self, wav_data, threshold=1000, min_silence=int(22050*0.4)):
+        """
+        处理音频静音，从1.0版本移植过来，但适配22050采样率
+        """
+        abs_trimmed = np.abs(wav_data).flatten()
+        last_non_silent = len(abs_trimmed) - np.argmax(abs_trimmed[::-1] >= threshold)
+
+        back_silence_length = len(wav_data) - last_non_silent
+        if back_silence_length < min_silence:
+            pad_length = min_silence - back_silence_length
+            padded = np.vstack([wav_data, np.zeros((pad_length, 1))])
+        else:
+            padded = wav_data
+
+        return padded.astype(np.int16)
+
 
 def find_most_similar_cosine(query_vector, matrix):
     query_vector = query_vector.float()
