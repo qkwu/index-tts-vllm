@@ -96,12 +96,6 @@ class IndexTTS2:
         load_checkpoint(self.gpt, self.gpt_path)
         self.gpt = self.gpt.to(self.device)
 
-        # 强制设置 max_tokens，解决 1815 限制问题
-        original_max_tokens = getattr(self.gpt.sampling_params, 'max_tokens', 'unknown')
-        self.gpt.sampling_params.max_tokens = 3000
-        print(f">> max_tokens 从 {original_max_tokens} 修改为 {self.gpt.sampling_params.max_tokens}")
-
-
         # if self.is_fp16:
         #     self.gpt.eval().half()
         # else:
