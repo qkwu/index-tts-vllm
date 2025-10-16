@@ -96,12 +96,6 @@ class IndexTTS2:
         load_checkpoint(self.gpt, self.gpt_path)
         self.gpt = self.gpt.to(self.device)
 
-        # 强制设置 max_tokens，解决 1815 限制问题
-        original_max_tokens = getattr(self.gpt.sampling_params, 'max_tokens', 'unknown')
-        self.gpt.sampling_params.max_tokens = 3000
-        print(f">> max_tokens 从 {original_max_tokens} 修改为 {self.gpt.sampling_params.max_tokens}")
-
-
         # if self.is_fp16:
         #     self.gpt.eval().half()
         # else:
@@ -250,7 +244,7 @@ class IndexTTS2:
                 wavs_list.append(sil_tensor)
 
         return wavs_list
-    
+
     async def infer(self, spk_audio_prompt, text, output_path,
               emo_audio_prompt=None, emo_alpha=1.0,
               emo_vector=None,
@@ -487,7 +481,7 @@ class IndexTTS2:
         end_time = time.perf_counter()
 
         wavs = self.insert_interval_silence(wavs, sampling_rate=sampling_rate, interval_silence=interval_silence)
-        
+
         wav = torch.cat(wavs, dim=1)
         wav_length = wav.shape[-1] / sampling_rate
         print(f">> gpt_gen_time: {gpt_gen_time:.2f} seconds")
