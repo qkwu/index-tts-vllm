@@ -60,6 +60,27 @@ class TTSResponse(BaseModel):
     text: str
     sampling_rate: int
 
+class AudioTTSRequest(BaseModel):
+    """使用参考音频文件的TTS请求"""
+    text: str
+    reference_audio_path: str  # 本地参考音频文件路径
+    temperature: float = 1.0
+    top_p: float = 0.8
+
+    # IndexTTS2.0 情感控制参数
+    emo_alpha: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
+    emo_vector: Optional[List[float]] = None
+    use_emo_text: Optional[bool] = False
+    emo_text: Optional[str] = None
+    use_random: Optional[bool] = False
+    interval_silence: Optional[int] = 200
+    max_text_tokens_per_segment: Optional[int] = 120
+
+    # 生成参数
+    top_k: Optional[int] = 30
+    repetition_penalty: Optional[float] = 10.0
+    max_mel_tokens: Optional[int] = 1500
+
 # 临时存储任务结果
 results = {}
 
@@ -305,6 +326,158 @@ async def compatible_list_references():
         return {"references": []}
     references = [{"id": spk_id, "name": spk_id} for spk_id in tts.speaker_dict.keys()]
     return {"references": references}
+
+@app.post("/v1/tts_with_audio", tags=["Audio Reference Endpoints"])
+async def generate_tts_with_audio(request: AudioTTSRequest, background_tasks: BackgroundTasks):
+    """
+    使用参考音频文件生成TTS并直接返回音频
+
+    这个接口接收本地音频文件路径作为参考，而不是预注册的音色ID
+    """
+    task_id = str(uuid.uuid4())
+    logger.info(f"Received audio reference request {task_id}")
+    logger.info(f"Reference audio path: {request.reference_audio_path}")
+
+    if tts is None:
+        raise HTTPException(status_code=503, detail="TTS model is not ready.")
+
+    try:
+        # 验证参考音频文件存在
+        if not os.path.exists(request.reference_audio_path):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Reference audio file not found: {request.reference_audio_path}"
+            )
+
+        # 构建情感控制参数
+        emo_control_params = {
+            "emo_audio_prompt": None,  # 不使用情感音频
+            "emo_alpha": request.emo_alpha if request.emo_alpha is not None else 1.0,
+            "emo_vector": request.emo_vector,
+            "use_emo_text": request.use_emo_text if request.use_emo_text is not None else False,
+            "emo_text": request.emo_text,
+            "use_random": request.use_random if request.use_random is not None else False,
+        }
+
+        logger.info(f"Emotion control params: {emo_control_params}")
+
+        # 调用底层TTS推理，使用参考音频
+        sr, wav = await tts.infer(
+            spk_audio_prompt=request.reference_audio_path,  # 使用传入的音频文件
+            text=request.text,
+            output_path=None,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k if request.top_k is not None else 30,
+            repetition_penalty=request.repetition_penalty if request.repetition_penalty is not None else 10.0,
+            max_mel_tokens=request.max_mel_tokens if request.max_mel_tokens is not None else 1500,
+            max_text_tokens_per_sentence=request.max_text_tokens_per_segment if request.max_text_tokens_per_segment is not None else 120,
+            **emo_control_params
+        )
+
+        # 确保 wav 是 numpy 数组格式
+        if isinstance(wav, tuple) and len(wav) == 2:
+            sr, wav = wav
+
+        # 应用音频后处理
+        if isinstance(wav, np.ndarray):
+            wav_data = wav.astype(np.float32)
+            if wav_data.ndim == 1:
+                wav_data = wav_data.reshape(-1, 1)
+        else:
+            # 如果是 torch tensor
+            wav_data = wav.cpu().numpy().astype(np.float32)
+            if wav_data.ndim == 1:
+                wav_data = wav_data.reshape(-1, 1)
+
+        # 应用静音修剪（保持与音色ID接口一致）
+        wav_data = tts.trim_and_pad_silence(wav_data)
+
+        # 保存到临时文件
+        output_path = os.path.join(OUTPUT_DIR, f"{task_id}.wav")
+        sf.write(output_path, wav_data.flatten(), sr)
+
+        duration = len(wav_data.flatten()) / sr
+
+        logger.info(f"Successfully generated audio with duration: {duration:.2f}s")
+
+        # 返回音频文件
+        background_tasks.add_task(os.remove, output_path)
+        return FileResponse(
+            output_path,
+            media_type="audio/wav",
+            filename=f"{task_id}.wav"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Task {task_id} failed: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/tts_with_audio_url", tags=["Audio Reference Endpoints"])
+async def generate_tts_with_audio_url(request: AudioTTSRequest):
+    """
+    使用参考音频文件生成TTS并返回音频URL（兼容原tts_url接口）
+    """
+    task_id = str(uuid.uuid4())
+    logger.info(f"Received audio reference URL request {task_id}")
+
+    if tts is None:
+        raise HTTPException(status_code=503, detail="TTS model is not ready.")
+
+    try:
+        # 验证参考音频文件存在
+        if not os.path.exists(request.reference_audio_path):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Reference audio file not found: {request.reference_audio_path}"
+            )
+
+        # 构建情感控制参数
+        emo_control_params = {
+            "emo_audio_prompt": None,
+            "emo_alpha": request.emo_alpha if request.emo_alpha is not None else 1.0,
+            "emo_vector": request.emo_vector,
+            "use_emo_text": request.use_emo_text if request.use_emo_text is not None else False,
+            "emo_text": request.emo_text,
+            "use_random": request.use_random if request.use_random is not None else False,
+        }
+
+        # 调用底层TTS推理
+        sr, wav = await tts.infer(
+            spk_audio_prompt=request.reference_audio_path,
+            text=request.text,
+            output_path=None,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k if request.top_k is not None else 30,
+            repetition_penalty=request.repetition_penalty if request.repetition_penalty is not None else 10.0,
+            max_mel_tokens=request.max_mel_tokens if request.max_mel_tokens is not None else 1500,
+            max_text_tokens_per_sentence=request.max_text_tokens_per_segment if request.max_text_tokens_per_segment is not None else 120,
+            **emo_control_params
+        )
+
+        # 返回原始音频字节流（与tts_url接口保持一致）
+        with io.BytesIO() as wav_buffer:
+            sf.write(wav_buffer, wav, sr, format='WAV')
+            wav_bytes = wav_buffer.getvalue()
+
+        return Response(content=wav_bytes, media_type="audio/wav")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Task {task_id} failed: {str(e)}", exc_info=True)
+        tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": str(tb_str)
+            }
+        )
 
 @app.get("/health")
 async def health_check():
