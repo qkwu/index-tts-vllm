@@ -14,9 +14,10 @@ import soundfile as sf
 from typing import List, Optional, Union
 from pathlib import Path
 import uuid
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import logging
 import numpy as np
+from starlette.background import BackgroundTask
 
 from indextts.infer_vllm_v2 import IndexTTS2
 
