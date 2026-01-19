@@ -1,5 +1,6 @@
 # FROM vllm/vllm-openai:latest
-FROM vllm/vllm-openai:v0.9.0
+#FROM vllm/vllm-openai:v0.9.0
+FROM registry.corp.kuaishou.com/ksp/public/private_clouds/llm-inference-vllm:1.0.250-feature-support-vllm-0.10.2-C550-c
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
