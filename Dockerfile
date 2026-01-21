@@ -1,6 +1,6 @@
 # FROM vllm/vllm-openai:latest
 #FROM vllm/vllm-openai:v0.9.0
-FROM registry.corp.kuaishou.com/ksp/public/private_clouds/llm-inference-vllm:1.0.250-feature-support-vllm-0.10.2-C550-c
+FROM registry.corp.kuaishou.com/ksp/public/computility/muxi_images:metax-vllm0.10.2-maca.ai3.2.1.7-torch2.6-py310-ubuntu22.04-amd64
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
